@@ -209,6 +209,7 @@ export function TangramPuzzle({ silhouette, onSolved, onClose }: Props) {
       <MotiView
         from={{ opacity: 0 }}
         animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
         transition={{ type: 'timing', duration: 220 }}
         style={[StyleSheet.absoluteFill, { backgroundColor: colors.scrim }]}
         pointerEvents="none"
@@ -217,7 +218,9 @@ export function TangramPuzzle({ silhouette, onSolved, onClose }: Props) {
       <MotiView
         from={{ translateY: 800 }}
         animate={{ translateY: 0 }}
+        exit={{ translateY: 800 }}
         transition={{ type: 'spring', damping: 22, stiffness: 220 }}
+        exitTransition={{ type: 'timing', duration: 260 }}
         style={styles.sheet}
       >
         <View style={styles.grabber} />

@@ -55,8 +55,12 @@ export default function Index() {
     return days;
   }, [store.currentWeekStart]);
 
-  const completedDaysBool = weekDays.map((day) =>
-    store.activeHabits.some((h) => store.getDayEntry(h.id, day)?.completed),
+  const completedDaysBool = weekDays.map(
+    (day) =>
+      store.activeHabits.length > 0 &&
+      store.activeHabits.every(
+        (h) => store.getDayEntry(h.id, day)?.completed,
+      ),
   );
   const earnedPieces = completedDaysBool.filter(Boolean).length;
   const weekComplete = earnedPieces >= 7;

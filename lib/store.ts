@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState as RNAppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   AppState,
@@ -69,15 +70,37 @@ export function useHabitStore() {
     };
   }, []);
 
-  // Persist on every change, but never before hydration (otherwise we'd
-  // overwrite real data with the empty default on first render).
-  useEffect(() => {
-    if (!hydrated) return;
-    const blob: PersistedBlob = { schemaVersion: SCHEMA_VERSION, data: state };
+  // Persist on every change, debounced — bursty edits (e.g. typing a
+  // reflection) coalesce into one disk write. Never persist before
+  // hydration finishes or we'd overwrite real data with the empty default.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const flush = useCallback(() => {
+    const blob: PersistedBlob = {
+      schemaVersion: SCHEMA_VERSION,
+      data: stateRef.current,
+    };
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(blob)).catch(() => {
       // Best-effort persistence.
     });
-  }, [state, hydrated]);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const t = setTimeout(flush, 300);
+    return () => clearTimeout(t);
+  }, [state, hydrated, flush]);
+
+  // Flush immediately when the app goes to the background so a pending
+  // debounced write isn't lost on close.
+  useEffect(() => {
+    if (!hydrated) return;
+    const sub = RNAppState.addEventListener('change', (next) => {
+      if (next === 'background' || next === 'inactive') flush();
+    });
+    return () => sub.remove();
+  }, [hydrated, flush]);
 
   const today = getToday();
   const currentWeekStart = getWeekStart(today);
@@ -209,6 +232,8 @@ export function useHabitStore() {
       ...prev,
       habits: prev.habits.filter((h) => h.id !== habitId),
       dayEntries: prev.dayEntries.filter((e) => e.habitId !== habitId),
+      missedDays: (prev.missedDays ?? []).filter((m) => m.habitId !== habitId),
+      weekReviews: prev.weekReviews.filter((r) => r.habitId !== habitId),
     }));
   }, []);
 
