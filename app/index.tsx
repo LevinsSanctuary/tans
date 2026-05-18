@@ -38,8 +38,10 @@ export default function Index() {
     null,
   );
   const [showPuzzle, setShowPuzzle] = useState(false);
+  const [weekDonePrompt, setWeekDonePrompt] = useState(false);
 
   const today = store.today;
+  const [selectedDay, setSelectedDay] = useState(today);
   const isFirstHabit = store.activeHabits.length === 0;
   const evening = isEvening();
 
@@ -68,11 +70,23 @@ export default function Index() {
   const puzzleSolved = store.isPuzzleSolved(store.currentWeekStart);
   const todayIdx = weekDays.indexOf(today);
 
+  // The day the habit list reads from / writes to. Falls back to today if
+  // a previously-selected day is no longer in the current week.
+  const selIdx = weekDays.indexOf(selectedDay);
+  const selectedIdx = selIdx >= 0 ? selIdx : todayIdx;
+  const activeDay = weekDays[selectedIdx];
+  const viewingToday = activeDay === today;
+
+  const closeAddSheet = () => {
+    setShowAddSheet(false);
+    setWeekDonePrompt(false);
+    setNewHabitName('');
+  };
+
   const handleAddHabit = () => {
     if (!newHabitName.trim()) return;
     store.addHabit(newHabitName.trim());
-    setNewHabitName('');
-    setShowAddSheet(false);
+    closeAddSheet();
   };
 
   const handleEdit = (id: string) => {
@@ -82,14 +96,14 @@ export default function Index() {
     setEditName('');
   };
 
-  const todayLabel = useMemo(() => {
-    const d = new Date(today + 'T00:00:00');
+  const selectedLabel = useMemo(() => {
+    const d = new Date(activeDay + 'T00:00:00');
     return d.toLocaleDateString('en-US', {
       weekday: 'long',
       month: 'long',
       day: 'numeric',
     });
-  }, [today]);
+  }, [activeDay]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -100,12 +114,28 @@ export default function Index() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View>
+          <View style={{ flexShrink: 1 }}>
             <Text style={styles.brand}>
               t<Text style={{ color: colors.primary }}>a</Text>n
               <Text style={{ color: colors.accent }}>s</Text>
             </Text>
-            <Text style={styles.dateLabel}>{todayLabel}</Text>
+            <View style={styles.dateRow}>
+              <Text style={styles.dateLabel}>{selectedLabel}</Text>
+              {!viewingToday && (
+                <Pressable
+                  onPress={() => setSelectedDay(today)}
+                  hitSlop={6}
+                  style={styles.todayBtn}
+                >
+                  <Ionicons
+                    name="arrow-back"
+                    size={11}
+                    color={colors.primaryForeground}
+                  />
+                  <Text style={styles.todayBtnText}>Today</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
           <View style={styles.pieceCounter}>
             <Text style={styles.pieceCounterText}>
@@ -148,6 +178,8 @@ export default function Index() {
                   silhouette={weekSilhouette}
                   completedDays={completedDaysBool}
                   todayIdx={todayIdx}
+                  selectedIdx={selectedIdx}
+                  onSelectDay={(i) => setSelectedDay(weekDays[i])}
                 />
                 {weekComplete && (
                   <Pressable
@@ -189,11 +221,11 @@ export default function Index() {
         {/* Today's habits */}
         <View style={{ gap: 12 }}>
           {store.activeHabits.map((habit, index) => {
-            const entry = store.getDayEntry(habit.id, today);
+            const entry = store.getDayEntry(habit.id, activeDay);
             const completed = entry?.completed ?? false;
             const reflection = entry?.reflection ?? '';
             const borderColor = habitBorders[index % habitBorders.length];
-            const missed = store.getMissedDay(habit.id, today);
+            const missed = store.getMissedDay(habit.id, activeDay);
 
             return (
               <View
@@ -204,13 +236,12 @@ export default function Index() {
                   <Pressable
                     onPress={() => {
                       const wasCompleted = completed;
-                      store.toggleDay(habit.id, today);
+                      store.toggleDay(habit.id, activeDay);
                       if (!wasCompleted) {
                         Haptics.notificationAsync(
                           Haptics.NotificationFeedbackType.Success,
                         );
-                        const todayIdx = weekDays.indexOf(today);
-                        setFallingPiece(todayIdx >= 0 ? todayIdx : 0);
+                        setFallingPiece(selectedIdx);
                       }
                     }}
                     style={[
@@ -319,7 +350,9 @@ export default function Index() {
                             color={colors.mutedForeground}
                           />
                           <Text style={styles.missedTriggerText}>
-                            I missed today — be gentle
+                            {viewingToday
+                              ? 'I missed today — be gentle'
+                              : 'I missed this day — be gentle'}
                           </Text>
                         </View>
                       </Pressable>
@@ -331,7 +364,9 @@ export default function Index() {
                   <View style={styles.reflectionWrap}>
                     <TextInput
                       value={reflection}
-                      onChangeText={(t) => store.setReflection(habit.id, today, t)}
+                      onChangeText={(t) =>
+                        store.setReflection(habit.id, activeDay, t)
+                      }
                       maxLength={200}
                       placeholder="How are you doing? (optional)"
                       placeholderTextColor={colors.mutedForeground}
@@ -346,7 +381,7 @@ export default function Index() {
           })}
         </View>
 
-        {evening && store.activeHabits.length > 0 && (
+        {evening && viewingToday && store.activeHabits.length > 0 && (
           <EveningCheckInPanel
             date={today}
             existing={store.getEveningCheckIn(today)}
@@ -386,7 +421,7 @@ export default function Index() {
         <MissedDaySheet
           habitName={missedFor.name}
           habitId={missedFor.id}
-          date={today}
+          date={activeDay}
           onClose={() => setMissedFor(null)}
           onSave={(entry) => {
             store.saveMissedDay(entry);
@@ -404,6 +439,14 @@ export default function Index() {
             onSolved={() => {
               store.markPuzzleSolved(store.currentWeekStart);
               setShowPuzzle(false);
+              if (store.canAddNewHabit()) {
+                const idea = store.getLatestNextHabitIdea();
+                setTimeout(() => {
+                  setNewHabitName(idea);
+                  setWeekDonePrompt(true);
+                  setShowAddSheet(true);
+                }, 380);
+              }
             }}
             onClose={() => setShowPuzzle(false)}
           />
@@ -432,7 +475,7 @@ export default function Index() {
             >
               <Pressable
                 style={StyleSheet.absoluteFill}
-                onPress={() => setShowAddSheet(false)}
+                onPress={closeAddSheet}
               />
             </MotiView>
             <KeyboardAvoidingView
@@ -450,8 +493,19 @@ export default function Index() {
               >
                 <View style={styles.grabber} />
                 <Text style={styles.sheetTitle}>
-                  ◆ {isFirstHabit ? 'Begin Your Tangram' : 'Add a New Habit'}
+                  ◆{' '}
+                  {weekDonePrompt
+                    ? 'Puzzle complete — what’s next?'
+                    : isFirstHabit
+                      ? 'Begin Your Tangram'
+                      : 'Add a New Habit'}
                 </Text>
+                {weekDonePrompt && (
+                  <Text style={styles.sheetSub}>
+                    Your shape is whole — carry the momentum into your next
+                    habit.
+                  </Text>
+                )}
                 <TextInput
                   value={newHabitName}
                   onChangeText={setNewHabitName}
@@ -499,7 +553,27 @@ const styles = StyleSheet.create({
     color: colors.foreground,
     letterSpacing: -0.5,
   },
-  dateLabel: { fontSize: 12, color: colors.mutedForeground, fontWeight: '500', marginTop: 2 },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  dateLabel: { fontSize: 12, color: colors.mutedForeground, fontWeight: '500' },
+  todayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  todayBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primaryForeground,
+  },
   pieceCounter: {
     backgroundColor: colors.muted,
     paddingHorizontal: 12,
@@ -691,6 +765,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: colors.foreground,
     marginBottom: 16,
+  },
+  sheetSub: {
+    fontSize: 13,
+    color: colors.mutedForeground,
+    marginTop: -8,
+    marginBottom: 16,
+    lineHeight: 18,
   },
   sheetInput: {
     backgroundColor: colors.muted,

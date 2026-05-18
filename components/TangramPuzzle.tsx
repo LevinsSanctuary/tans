@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   Pressable,
@@ -183,16 +183,30 @@ export function TangramPuzzle({ silhouette, onSolved, onClose }: Props) {
   const [placed, setPlaced] = useState<boolean[]>(() => Array(7).fill(false));
   const [celebrating, setCelebrating] = useState(false);
 
+  // onSolved is an inline prop (new reference every parent render); keep it
+  // in a ref so it can't be an effect dependency and retrigger the timer.
+  const onSolvedRef = useRef(onSolved);
+  onSolvedRef.current = onSolved;
+
+  const allPlaced = placed.every(Boolean);
+
+  // Latch the celebration once every piece is placed.
   useEffect(() => {
-    if (placed.every(Boolean) && !celebrating) {
-      setCelebrating(true);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
-        () => {},
-      );
-      const t = setTimeout(() => onSolved(), 1400);
-      return () => clearTimeout(t);
-    }
-  }, [placed, celebrating, onSolved]);
+    if (allPlaced) setCelebrating(true);
+  }, [allPlaced]);
+
+  // When the celebration latches, fire haptics and hand back to the parent
+  // after a beat. Depends only on `celebrating` (which never flips back),
+  // so the timer is scheduled exactly once and isn't cancelled by an
+  // unrelated re-render.
+  useEffect(() => {
+    if (!celebrating) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+      () => {},
+    );
+    const t = setTimeout(() => onSolvedRef.current(), 1400);
+    return () => clearTimeout(t);
+  }, [celebrating]);
 
   const setPlacedAt = (i: number, v: boolean) =>
     setPlaced((prev) => {

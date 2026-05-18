@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 
 import { colors, fonts, radius } from '@/constants/theme';
@@ -13,9 +13,17 @@ interface Props {
   silhouette: Silhouette;
   completedDays: boolean[]; // length 7, Mon..Sun
   todayIdx: number;
+  selectedIdx: number;
+  onSelectDay: (idx: number) => void;
 }
 
-export function WeekStrip({ silhouette, completedDays, todayIdx }: Props) {
+export function WeekStrip({
+  silhouette,
+  completedDays,
+  todayIdx,
+  selectedIdx,
+  onSelectDay,
+}: Props) {
   const geometries = useMemo(
     () => getPieceGeometries(silhouette),
     [silhouette],
@@ -26,21 +34,28 @@ export function WeekStrip({ silhouette, completedDays, todayIdx }: Props) {
       {DAY_LETTERS.map((letter, i) => {
         const completed = completedDays[i];
         const isToday = i === todayIdx;
+        const isSelected = i === selectedIdx;
+        const locked = i > todayIdx;
         const geom = geometries[i];
         const color = TANGRAM_COLORS[i];
         return (
-          <View
+          <Pressable
             key={i}
-            style={[
+            disabled={locked}
+            onPress={() => onSelectDay(i)}
+            style={({ pressed }) => [
               styles.cell,
               completed && styles.cellCompleted,
-              isToday && !completed && styles.cellToday,
+              isSelected && styles.cellSelected,
+              locked && styles.cellLocked,
+              pressed && !locked && { opacity: 0.6 },
             ]}
           >
             <Text
               style={[
                 styles.dayLetter,
                 completed && styles.dayLetterCompleted,
+                isToday && styles.dayLetterToday,
               ]}
             >
               {letter}
@@ -63,7 +78,7 @@ export function WeekStrip({ silhouette, completedDays, todayIdx }: Props) {
                 <View style={styles.placeholder} />
               )}
             </View>
-          </View>
+          </Pressable>
         );
       })}
     </View>
@@ -84,10 +99,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: 'transparent',
   },
-  cellToday: {
+  cellSelected: {
     borderColor: colors.primary,
     backgroundColor: 'hsla(340, 55%, 75%, 0.12)',
   },
@@ -95,6 +110,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderColor: colors.border,
   },
+  cellLocked: { opacity: 0.4 },
   dayLetter: {
     fontSize: 10,
     fontFamily: fonts.sansBold,
@@ -102,6 +118,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   dayLetterCompleted: { color: colors.foreground },
+  dayLetterToday: { color: colors.primary },
   pieceWrap: {
     width: CELL_PIECE_SIZE,
     height: CELL_PIECE_SIZE,

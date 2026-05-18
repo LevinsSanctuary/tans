@@ -191,6 +191,18 @@ export function useHabitStore() {
     [state.eveningCheckIns],
   );
 
+  // Most recent non-empty "what habit could you add next" idea, used to
+  // pre-fill the add-habit sheet after a puzzle is completed.
+  const getLatestNextHabitIdea = useCallback((): string => {
+    let latest: EveningCheckIn | undefined;
+    for (const c of state.eveningCheckIns) {
+      if (c.nextHabitIdea.trim() && (!latest || c.date > latest.date)) {
+        latest = c;
+      }
+    }
+    return latest?.nextHabitIdea.trim() ?? '';
+  }, [state.eveningCheckIns]);
+
   const saveMissedDay = useCallback((entry: MissedDay) => {
     setState((prev) => {
       const others = (prev.missedDays ?? []).filter(
@@ -323,6 +335,7 @@ export function useHabitStore() {
     saveEveningCheckIn,
     getDayEntry,
     getEveningCheckIn,
+    getLatestNextHabitIdea,
     saveMissedDay,
     getMissedDay,
     getWeekCompletionForHabit,
