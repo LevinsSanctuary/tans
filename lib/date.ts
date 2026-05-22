@@ -31,3 +31,9 @@ export function getDaysOfWeek(weekStart: string): string[] {
 export function isEvening(): boolean {
   return new Date().getHours() >= 19;
 }
+
+export function addDays(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return toLocalISODate(d);
+}

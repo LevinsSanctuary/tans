@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -21,9 +22,11 @@ import { EveningCheckInPanel } from '@/components/EveningCheckIn';
 import { MissedDaySheet } from '@/components/MissedDaySheet';
 import { TangramPuzzle } from '@/components/TangramPuzzle';
 import { WeekStrip } from '@/components/WeekStrip';
+import { GameRules } from '@/components/GameRules';
+import { HolidaySheet } from '@/components/HolidaySheet';
 import { DevMenu } from '@/components/DevMenu';
 import { getSilhouetteForWeek } from '@/lib/silhouettes';
-import { useHabitStore } from '@/lib/store';
+import { GRADUATION_WEEKS, useHabitStore } from '@/lib/store';
 import { isEvening } from '@/lib/date';
 import { colors, fonts, habitBorders, radius } from '@/constants/theme';
 
@@ -39,6 +42,10 @@ export default function Index() {
   );
   const [showPuzzle, setShowPuzzle] = useState(false);
   const [weekDonePrompt, setWeekDonePrompt] = useState(false);
+  const [showRules, setShowRules] = useState(false);
+  const [holidayFor, setHolidayFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
 
   const today = store.today;
   const [selectedDay, setSelectedDay] = useState(today);
@@ -57,13 +64,7 @@ export default function Index() {
     return days;
   }, [store.currentWeekStart]);
 
-  const completedDaysBool = weekDays.map(
-    (day) =>
-      store.activeHabits.length > 0 &&
-      store.activeHabits.every(
-        (h) => store.getDayEntry(h.id, day)?.completed,
-      ),
-  );
+  const completedDaysBool = weekDays.map((day) => store.isDayEarned(day));
   const earnedPieces = completedDaysBool.filter(Boolean).length;
   const weekComplete = earnedPieces >= 7;
   const weekSilhouette = getSilhouetteForWeek(store.currentWeekStart);
@@ -111,6 +112,7 @@ export default function Index() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* Header */}
         <View style={styles.header}>
@@ -137,11 +139,24 @@ export default function Index() {
               )}
             </View>
           </View>
-          <View style={styles.pieceCounter}>
-            <Text style={styles.pieceCounterText}>
-              {earnedPieces}
-              <Text style={{ color: colors.mutedForeground }}>/7 pieces</Text>
-            </Text>
+          <View style={styles.headerRight}>
+            <View style={styles.pieceCounter}>
+              <Text style={styles.pieceCounterText}>
+                {earnedPieces}
+                <Text style={{ color: colors.mutedForeground }}>/7 pieces</Text>
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => setShowRules(true)}
+              hitSlop={8}
+              style={styles.infoBtn}
+            >
+              <Ionicons
+                name="help-circle-outline"
+                size={24}
+                color={colors.mutedForeground}
+              />
+            </Pressable>
           </View>
         </View>
 
@@ -171,7 +186,11 @@ export default function Index() {
                   <Text style={styles.boardSub}>
                     {weekComplete
                       ? 'Ready to assemble'
-                      : `${earnedPieces} of 7 · one per day you show up`}
+                      : `${earnedPieces} of 7 · ${
+                          store.activeHabits.length > 1
+                            ? 'finish all your habits each day'
+                            : 'one per day you show up'
+                        }`}
                   </Text>
                 </View>
                 <WeekStrip
@@ -226,6 +245,10 @@ export default function Index() {
             const reflection = entry?.reflection ?? '';
             const borderColor = habitBorders[index % habitBorders.length];
             const missed = store.getMissedDay(habit.id, activeDay);
+            const holiday = store.getHabitHolidayInfo(habit);
+            const pausedToday = store.isHabitPausedOn(habit, activeDay);
+            const slipped = store.habitSlipped(habit);
+            const gradWeeks = store.habitGraduationProgress(habit).current;
 
             return (
               <View
@@ -235,6 +258,7 @@ export default function Index() {
                 <View style={styles.habitRow}>
                   <Pressable
                     onPress={() => {
+                      Keyboard.dismiss();
                       const wasCompleted = completed;
                       store.toggleDay(habit.id, activeDay);
                       if (!wasCompleted) {
@@ -272,18 +296,38 @@ export default function Index() {
                     </View>
                   ) : (
                     <View style={styles.nameRow}>
-                      <Text
-                        style={[
-                          styles.habitName,
-                          completed && {
-                            color: colors.mutedForeground,
-                            textDecorationLine: 'line-through',
-                          },
-                        ]}
-                      >
-                        {habit.name}
-                      </Text>
+                      <View style={{ flexShrink: 1 }}>
+                        <Text
+                          style={[
+                            styles.habitName,
+                            completed && {
+                              color: colors.mutedForeground,
+                              textDecorationLine: 'line-through',
+                            },
+                          ]}
+                        >
+                          {habit.name}
+                        </Text>
+                        <Text style={styles.gradProgress}>
+                          {gradWeeks >= GRADUATION_WEEKS
+                            ? 'Ready to graduate ✦'
+                            : `Week ${gradWeeks}/${GRADUATION_WEEKS} kept`}
+                        </Text>
+                      </View>
                       <View style={{ flexDirection: 'row', gap: 4 }}>
+                        <Pressable
+                          onPress={() =>
+                            setHolidayFor({ id: habit.id, name: habit.name })
+                          }
+                          hitSlop={8}
+                          style={styles.iconBtn}
+                        >
+                          <Ionicons
+                            name={holiday ? 'airplane' : 'airplane-outline'}
+                            size={14}
+                            color={holiday ? colors.primary : colors.mutedForeground}
+                          />
+                        </Pressable>
                         <Pressable
                           onPress={() => {
                             setEditingId(habit.id);
@@ -327,37 +371,77 @@ export default function Index() {
                   )}
                 </View>
 
-                {/* Missed-day chip / reflection */}
-                {!completed && (
-                  <View style={styles.missedRow}>
-                    {missed ? (
-                      <Text style={styles.missedLogged}>
-                        {missed.kind === 'badge'
-                          ? `Logged: ${missed.badge?.replace('-', ' ')} 🌱`
-                          : `Small win: "${missed.achievement}"`}
-                      </Text>
-                    ) : (
-                      <Pressable
-                        onPress={() =>
-                          setMissedFor({ id: habit.id, name: habit.name })
-                        }
-                        hitSlop={6}
-                      >
-                        <View style={styles.missedTrigger}>
-                          <Ionicons
-                            name="cloud-offline-outline"
-                            size={14}
-                            color={colors.mutedForeground}
-                          />
-                          <Text style={styles.missedTriggerText}>
-                            {viewingToday
-                              ? 'I missed today — be gentle'
-                              : 'I missed this day — be gentle'}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    )}
+                {/* Slipped-last-week prompt to drop */}
+                {slipped && !holiday && (
+                  <View style={styles.slipBanner}>
+                    <Text style={styles.slipText}>
+                      This one slipped last week. Keep going, or drop it to
+                      lighten your load?
+                    </Text>
+                    <Pressable
+                      onPress={() =>
+                        Alert.alert(
+                          'Drop habit?',
+                          `This will remove "${habit.name}" and its history.`,
+                          [
+                            { text: 'Keep it', style: 'cancel' },
+                            {
+                              text: 'Drop',
+                              style: 'destructive',
+                              onPress: () => store.deleteHabit(habit.id),
+                            },
+                          ],
+                        )
+                      }
+                      hitSlop={6}
+                    >
+                      <Text style={styles.slipDrop}>Drop</Text>
+                    </Pressable>
                   </View>
+                )}
+
+                {/* Holiday chip / missed-day chip / reflection */}
+                {pausedToday ? (
+                  <View style={styles.missedRow}>
+                    <Text style={styles.pausedChip}>
+                      🏝️ On holiday
+                      {holiday
+                        ? ` · ${holiday.remaining} ${holiday.remaining === 1 ? 'day' : 'days'} left`
+                        : ''}
+                    </Text>
+                  </View>
+                ) : (
+                  !completed && (
+                    <View style={styles.missedRow}>
+                      {missed ? (
+                        <Text style={styles.missedLogged}>
+                          {missed.kind === 'badge'
+                            ? `Logged: ${missed.badge?.replace('-', ' ')} 🌱`
+                            : `Small win: "${missed.achievement}"`}
+                        </Text>
+                      ) : (
+                        <Pressable
+                          onPress={() =>
+                            setMissedFor({ id: habit.id, name: habit.name })
+                          }
+                          hitSlop={6}
+                        >
+                          <View style={styles.missedTrigger}>
+                            <Ionicons
+                              name="cloud-offline-outline"
+                              size={14}
+                              color={colors.mutedForeground}
+                            />
+                            <Text style={styles.missedTriggerText}>
+                              {viewingToday
+                                ? 'I missed today — be gentle'
+                                : 'I missed this day — be gentle'}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      )}
+                    </View>
+                  )
                 )}
 
                 {completed && (
@@ -380,6 +464,34 @@ export default function Index() {
             );
           })}
         </View>
+
+        {/* Why you can't add a new habit yet */}
+        {!isFirstHabit && !store.canAddNewHabit() && (
+          <View style={styles.addHint}>
+            <Ionicons
+              name="lock-closed-outline"
+              size={14}
+              color={colors.mutedForeground}
+            />
+            <Text style={styles.addHintText}>{store.addHabitBlockReason()}</Text>
+          </View>
+        )}
+
+        {/* Permanent habit box */}
+        {store.graduatedHabits.length > 0 && (
+          <View style={styles.permanentBox}>
+            <Text style={styles.permanentEyebrow}>Permanent habits</Text>
+            <Text style={styles.permanentSub}>
+              Kept for 9 weeks — now second nature.
+            </Text>
+            {store.graduatedHabits.map((h) => (
+              <View key={h.id} style={styles.permanentRow}>
+                <Text style={styles.permanentStar}>✦</Text>
+                <Text style={styles.permanentName}>{h.name}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {evening && viewingToday && store.activeHabits.length > 0 && (
           <EveningCheckInPanel
@@ -449,6 +561,34 @@ export default function Index() {
               }
             }}
             onClose={() => setShowPuzzle(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Game rules */}
+      <AnimatePresence>
+        {showRules && <GameRules key="rules" onClose={() => setShowRules(false)} />}
+      </AnimatePresence>
+
+      {/* Holiday hold */}
+      <AnimatePresence>
+        {holidayFor && (
+          <HolidaySheet
+            key="holiday"
+            habitName={holidayFor.name}
+            activeRemaining={(() => {
+              const h = store.activeHabits.find((x) => x.id === holidayFor.id);
+              return h ? store.getHabitHolidayInfo(h)?.remaining : undefined;
+            })()}
+            onClose={() => setHolidayFor(null)}
+            onConfirm={(days) => {
+              store.setHabitHoliday(holidayFor.id, days);
+              setHolidayFor(null);
+            }}
+            onResume={() => {
+              store.clearHabitHoliday(holidayFor.id);
+              setHolidayFor(null);
+            }}
           />
         )}
       </AnimatePresence>
@@ -574,6 +714,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.primaryForeground,
   },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  infoBtn: { padding: 2 },
   pieceCounter: {
     backgroundColor: colors.muted,
     paddingHorizontal: 12,
@@ -681,12 +823,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  nameRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  nameRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   habitName: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.foreground,
-    flexShrink: 1,
+  },
+  gradProgress: {
+    fontSize: 11,
+    color: colors.mutedForeground,
+    fontWeight: '600',
+    marginTop: 2,
   },
   editRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   editInput: {
@@ -704,6 +851,20 @@ const styles = StyleSheet.create({
 
   missedRow: { marginTop: 12, paddingLeft: 52 },
   missedLogged: { fontSize: 12, color: colors.mutedForeground, fontStyle: 'italic' },
+  pausedChip: { fontSize: 12, fontWeight: '600', color: colors.primary },
+  slipBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    marginLeft: 52,
+    backgroundColor: 'hsla(5, 55%, 75%, 0.18)',
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  slipText: { flex: 1, fontSize: 12, lineHeight: 17, color: colors.foreground },
+  slipDrop: { fontSize: 13, fontWeight: '700', color: colors.destructiveForeground },
   missedTrigger: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   missedTriggerText: {
     fontSize: 12,
@@ -724,6 +885,43 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   reflectionCount: { fontSize: 11, color: colors.mutedForeground, marginTop: 4 },
+
+  addHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: colors.muted,
+    borderRadius: radius.lg,
+  },
+  addHintText: { flex: 1, fontSize: 12, lineHeight: 17, color: colors.mutedForeground },
+
+  permanentBox: {
+    marginTop: 24,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius['2xl'],
+    padding: 16,
+  },
+  permanentEyebrow: {
+    fontSize: 11,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: colors.mutedForeground,
+    fontWeight: '700',
+  },
+  permanentSub: { fontSize: 12, color: colors.mutedForeground, marginTop: 2 },
+  permanentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  permanentStar: { fontSize: 16, color: colors.success },
+  permanentName: { fontSize: 15, fontWeight: '600', color: colors.foreground },
 
   fab: {
     position: 'absolute',

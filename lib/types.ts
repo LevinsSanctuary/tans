@@ -1,8 +1,20 @@
+export interface HabitHoliday {
+  // First paused day, inclusive (YYYY-MM-DD, local).
+  startDate: string;
+  // Number of paused days, 1..7. Days 4-7 are the "danger zone".
+  days: number;
+}
+
 export interface Habit {
   id: string;
   name: string;
   createdAt: string;
   active: boolean;
+  // Set when a habit completes 9 consecutive full weeks (63 days) and moves
+  // to the permanent habit box. Once set, the habit is no longer `active`.
+  graduatedAt?: string;
+  // An active per-habit holiday hold (counting paused). Cleared when expired.
+  holiday?: HabitHoliday;
 }
 
 export interface DayEntry {

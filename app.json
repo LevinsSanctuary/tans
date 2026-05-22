@@ -20,7 +20,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/tans-icon.png",
+          "image": "./assets/images/tans-icon-transparent.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#FAF7F4",
@@ -40,6 +40,9 @@
         "projectId": "b8ac5f7d-f7a5-4d7e-b906-87a1081706be"
       }
     },
-    "owner": "productundefined"
+    "owner": "productundefined",
+    "android": {
+      "package": "com.tans.mobile"
+    }
   }
 }

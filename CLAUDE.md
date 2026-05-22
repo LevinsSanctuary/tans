@@ -30,6 +30,8 @@ components/
   FallingTangram.tsx # celebratory overlay (Moti spring drop) on habit completion
   EveningCheckIn.tsx # ≥7pm panel: 1-10 likelihood + next-habit idea
   MissedDaySheet.tsx # bottom sheet: "be gentle" badge picker / small-win textarea
+  HolidaySheet.tsx   # per-habit 1-7 day counting pause (4-7 = danger zone)
+  GameRules.tsx      # "rules of the game" info sheet (header ? button)
 constants/
   theme.ts           # colors (brick palette), radius scale, font names — light mode only
 lib/
@@ -41,6 +43,16 @@ lib/
 ```
 
 Path alias `@/*` → repo root ([tsconfig.json](tsconfig.json)).
+
+## Game rules (mechanics)
+
+Rule constants live in [lib/store.ts](lib/store.ts) (`MAX_ACTIVE_HABITS=3`, `GRADUATION_WEEKS=9`, `MAX_HOLIDAY_DAYS=7`, `HOLIDAY_DANGER_DAYS=4`) and are mirrored verbatim in [components/GameRules.tsx](components/GameRules.tsx). Most are **derived** from `dayEntries` + `habit.createdAt`, not stored:
+
+- **AND across habits** — a day earns a piece only if every active, non-paused habit that existed that day is completed (`isDayEarned`). The board/week-strip read from this.
+- **Slots & weekly add** — max 3 active habits; at most one new habit per week (`addedHabitThisWeek`, derived from `createdAt` week); and adding requires a fully-earned week (current/last/two-weeks-ago via `completedRecentWeek`). `canAddNewHabit()` / `addHabitBlockReason()` gate the FAB + hint.
+- **Graduation** — 9 *consecutive elapsed full weeks* (`habitGraduationProgress`) flips a habit to `graduatedAt` + `active:false` via an effect; it then renders in the read-only "Permanent habits" box. The in-progress week never counts until elapsed.
+- **Holiday hold (per-habit)** — `habit.holiday = { startDate, days }`; `isHabitPausedOn` excludes paused days from earning and from full-week checks (so a hold can't break a streak). Set/cleared via `setHabitHoliday`/`clearHabitHoliday`.
+- **Slip → drop prompt** — `habitSlipped` flags a habit whose previous fully-elapsed week wasn't full (past the creation-week grace); the card shows a non-modal "drop it?" banner. Nothing auto-resets.
 
 ## Persistence model
 
