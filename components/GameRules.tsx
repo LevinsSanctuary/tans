@@ -39,6 +39,11 @@ const RULES: { icon: string; title: string; body: string }[] = [
     title: 'Be gentle',
     body: 'Missed a day? Log a small win instead. Slip a whole week and tans will gently ask whether you’d like to drop that habit to lighten the load.',
   },
+  {
+    icon: '✅',
+    title: 'Today’s five',
+    body: 'The To-Do tab holds up to five tasks, each cycling Open → Started → Completed. Completed ones clear at midnight; started ones roll over. Let a task sit untouched for a week and it costs you a tangram piece — and deleting one asks for a line on why you’re letting it go.',
+  },
 ];
 
 export function GameRules({ onClose }: Props) {

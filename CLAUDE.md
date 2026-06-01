@@ -32,15 +32,20 @@ components/
   MissedDaySheet.tsx # bottom sheet: "be gentle" badge picker / small-win textarea
   HolidaySheet.tsx   # per-habit 1-7 day counting pause (4-7 = danger zone)
   GameRules.tsx      # "rules of the game" info sheet (header ? button)
+  TodoList.tsx       # "Today's five" to-do list (status cycle, stale penalty) — shown on the To-Do tab
+  DeleteTodoSheet.tsx# bottom sheet: requires ≥20 chars of reasoning to delete a to-do
 constants/
   theme.ts           # colors (brick palette), radius scale, font names — light mode only
 lib/
-  types.ts           # Habit, DayEntry, EveningCheckIn, MissedDay, AppState (ports of habit-loop)
+  types.ts           # Habit, DayEntry, EveningCheckIn, MissedDay, AppState + Todo* types (ports of habit-loop)
   date.ts            # getToday, getWeekStart, getDaysOfWeek, isEvening — local time, NOT UTC
   silhouettes.ts     # 5 weekly silhouettes + getSilhouetteForWeek hash
   store.ts           # useHabitStore — AsyncStorage-backed, async hydration
+  todoStore.ts       # useTodoStore — separate AsyncStorage key, same hydration/debounce pattern
   notifications.ts   # setupNotifications: permission + daily DAILY triggers
 ```
+
+[app/index.tsx](app/index.tsx) owns the single `useTodoStore()` instance and passes it into `<TodoList>` (don't call the hook twice — each instance hydrates/maintains its own async state). A `Today / To-Do` tab toggle switches between the habit list and the to-do list.
 
 Path alias `@/*` → repo root ([tsconfig.json](tsconfig.json)).
 
@@ -53,13 +58,14 @@ Rule constants live in [lib/store.ts](lib/store.ts) (`MAX_ACTIVE_HABITS=3`, `GRA
 - **Graduation** — 9 *consecutive elapsed full weeks* (`habitGraduationProgress`) flips a habit to `graduatedAt` + `active:false` via an effect; it then renders in the read-only "Permanent habits" box. The in-progress week never counts until elapsed.
 - **Holiday hold (per-habit)** — `habit.holiday = { startDate, days }`; `isHabitPausedOn` excludes paused days from earning and from full-week checks (so a hold can't break a streak). Set/cleared via `setHabitHoliday`/`clearHabitHoliday`.
 - **Slip → drop prompt** — `habitSlipped` flags a habit whose previous fully-elapsed week wasn't full (past the creation-week grace); the card shows a non-modal "drop it?" banner. Nothing auto-resets.
+- **To-do list** ([lib/todoStore.ts](lib/todoStore.ts), constants `DEFAULT_TODO_SLOTS=5`, `TODO_STALE_DAYS=7`, `TODO_DELETE_MIN_CHARS=20`) — up to 5 slots; each item cycles `open → started → completed`. `runDailyMaintenance` (idempotent per day, runs once hydrated) clears completed items at the daily rollover and, for any item ≥7 days old, charges one tangram **penalty piece** for the current week (`penaltyApplied` ensures once-only). The penalty subtracts from the week's earned pieces in [app/index.tsx](app/index.tsx) (`earnedPieces = max(0, rawEarned − penaltyPieces)`). Deleting a to-do requires ≥20 chars of reasoning, logged to `deleted[]`.
 
 ## Persistence model
 
-- Single AsyncStorage key: `tans:state:v1`.
-- Persisted blob: `{ schemaVersion: 1, data: AppState }`. The version field is the migration hook for future schema changes — bump it and write a migration in [lib/store.ts](lib/store.ts).
-- Hydration is async; the store exposes a `hydrated` boolean and skips writes until hydration finishes (otherwise we'd clobber real data with the empty default on first render).
-- IDs use a non-crypto Math.random UUID v4 helper in [lib/store.ts](lib/store.ts) — fine for local-only data.
+- Two AsyncStorage keys: `tans:state:v1` (habits, via `useHabitStore`) and `tans:todos:v1` (to-dos, via `useTodoStore`). The domains are deliberately decoupled — they only meet at the piece counter (stale-to-do penalty). Each owns an independent versioned blob and hydration cycle.
+- Persisted blob: `{ schemaVersion: 1, data: ... }`. The version field is the migration hook for future schema changes — bump it and write a migration in the respective store.
+- Hydration is async; both stores expose a `hydrated` boolean and skip writes until hydration finishes (otherwise we'd clobber real data with the empty default on first render). `useTodoStore` also defers `runDailyMaintenance` until hydrated for the same reason — running it on the empty default would stamp `lastRollover` before stored data arrives.
+- IDs use a non-crypto Math.random UUID v4 helper (duplicated in both stores) — fine for local-only data.
 
 ## Animation conventions
 
@@ -70,6 +76,7 @@ Rule constants live in [lib/store.ts](lib/store.ts) (`MAX_ACTIVE_HABITS=3`, `GRA
   ```
 - **AnimatePresence** from `moti` (NOT framer-motion) wraps conditionally-rendered transitions.
 - Bottom sheets are NOT `@gorhom/bottom-sheet` — they're `MotiView` slides on a `KeyboardAvoidingView` with a `Pressable` scrim. If we ever need drag-to-dismiss, swap individual sheets to gorhom; for v1 the simpler approach is consistent.
+- **Keyboard gotcha:** any sheet with a `TextInput` must be rendered at the *screen root* in [app/index.tsx](app/index.tsx) (a sibling of the root `ScrollView`), never nested inside the `ScrollView` — its `StyleSheet.absoluteFill` + `KeyboardAvoidingView` are positioned relative to the nearest ancestor, so inside the scroll view the keyboard covers it. This is why `TodoList` bubbles its delete request up via `onRequestDelete` and the `DeleteTodoSheet` lives at the root. Inline inputs that *do* live in the ScrollView (reflection box, edit-habit field, to-do slots) rely on the ScrollView's `automaticallyAdjustKeyboardInsets` to scroll above the keyboard.
 
 ## Notifications
 

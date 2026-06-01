@@ -24,14 +24,20 @@ import { TangramPuzzle } from '@/components/TangramPuzzle';
 import { WeekStrip } from '@/components/WeekStrip';
 import { GameRules } from '@/components/GameRules';
 import { HolidaySheet } from '@/components/HolidaySheet';
+import { TodoList } from '@/components/TodoList';
+import { DeleteTodoSheet } from '@/components/DeleteTodoSheet';
 import { DevMenu } from '@/components/DevMenu';
 import { getSilhouetteForWeek } from '@/lib/silhouettes';
 import { GRADUATION_WEEKS, useHabitStore } from '@/lib/store';
+import { useTodoStore } from '@/lib/todoStore';
 import { isEvening } from '@/lib/date';
+import type { TodoItem } from '@/lib/types';
 import { colors, fonts, habitBorders, radius } from '@/constants/theme';
 
 export default function Index() {
   const store = useHabitStore();
+  const todo = useTodoStore();
+  const [activeTab, setActiveTab] = useState<'today' | 'todo'>('today');
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -46,6 +52,7 @@ export default function Index() {
   const [holidayFor, setHolidayFor] = useState<{ id: string; name: string } | null>(
     null,
   );
+  const [deleteTodoTarget, setDeleteTodoTarget] = useState<TodoItem | null>(null);
 
   const today = store.today;
   const [selectedDay, setSelectedDay] = useState(today);
@@ -65,7 +72,9 @@ export default function Index() {
   }, [store.currentWeekStart]);
 
   const completedDaysBool = weekDays.map((day) => store.isDayEarned(day));
-  const earnedPieces = completedDaysBool.filter(Boolean).length;
+  // Stale to-dos subtract from the week's earned pieces (never below zero).
+  const rawEarned = completedDaysBool.filter(Boolean).length;
+  const earnedPieces = Math.max(0, rawEarned - todo.penaltyPieces);
   const weekComplete = earnedPieces >= 7;
   const weekSilhouette = getSilhouetteForWeek(store.currentWeekStart);
   const puzzleSolved = store.isPuzzleSolved(store.currentWeekStart);
@@ -108,58 +117,59 @@ export default function Index() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      {/* Fixed header — lives outside the ScrollView so it stays pinned */}
+      <View style={styles.header}>
+        <View style={{ flexShrink: 1 }}>
+          <Text style={styles.brand}>
+            t<Text style={{ color: colors.primary }}>a</Text>n
+            <Text style={{ color: colors.accent }}>s</Text>
+          </Text>
+          <View style={styles.dateRow}>
+            <Text style={styles.dateLabel}>{selectedLabel}</Text>
+            {!viewingToday && (
+              <Pressable
+                onPress={() => setSelectedDay(today)}
+                hitSlop={6}
+                style={styles.todayBtn}
+              >
+                <Ionicons
+                  name="arrow-back"
+                  size={11}
+                  color={colors.primaryForeground}
+                />
+                <Text style={styles.todayBtnText}>Today</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+        <View style={styles.headerRight}>
+          <View style={styles.pieceCounter}>
+            <Text style={styles.pieceCounterText}>
+              {earnedPieces}
+              <Text style={{ color: colors.mutedForeground }}>/7 pieces</Text>
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setShowRules(true)}
+            hitSlop={8}
+            style={styles.infoBtn}
+          >
+            <Ionicons
+              name="help-circle-outline"
+              size={24}
+              color={colors.mutedForeground}
+            />
+          </Pressable>
+        </View>
+      </View>
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={{ flexShrink: 1 }}>
-            <Text style={styles.brand}>
-              t<Text style={{ color: colors.primary }}>a</Text>n
-              <Text style={{ color: colors.accent }}>s</Text>
-            </Text>
-            <View style={styles.dateRow}>
-              <Text style={styles.dateLabel}>{selectedLabel}</Text>
-              {!viewingToday && (
-                <Pressable
-                  onPress={() => setSelectedDay(today)}
-                  hitSlop={6}
-                  style={styles.todayBtn}
-                >
-                  <Ionicons
-                    name="arrow-back"
-                    size={11}
-                    color={colors.primaryForeground}
-                  />
-                  <Text style={styles.todayBtnText}>Today</Text>
-                </Pressable>
-              )}
-            </View>
-          </View>
-          <View style={styles.headerRight}>
-            <View style={styles.pieceCounter}>
-              <Text style={styles.pieceCounterText}>
-                {earnedPieces}
-                <Text style={{ color: colors.mutedForeground }}>/7 pieces</Text>
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => setShowRules(true)}
-              hitSlop={8}
-              style={styles.infoBtn}
-            >
-              <Ionicons
-                name="help-circle-outline"
-                size={24}
-                color={colors.mutedForeground}
-              />
-            </Pressable>
-          </View>
-        </View>
-
         {/* Tangram board */}
         {!isFirstHabit && (
           <View style={styles.boardCard}>
@@ -177,6 +187,11 @@ export default function Index() {
                     />
                     <Text style={styles.completeBadgeText}>Assembled</Text>
                   </View>
+                  {todo.penaltyPieces > 0 && (
+                    <Text style={styles.penaltyNote}>
+                      −{todo.penaltyPieces} from stale to-dos
+                    </Text>
+                  )}
                 </View>
               </View>
             ) : (
@@ -200,6 +215,11 @@ export default function Index() {
                   selectedIdx={selectedIdx}
                   onSelectDay={(i) => setSelectedDay(weekDays[i])}
                 />
+                {todo.penaltyPieces > 0 && (
+                  <Text style={[styles.penaltyNote, { paddingHorizontal: 4 }]}>
+                    −{todo.penaltyPieces} from stale to-dos
+                  </Text>
+                )}
                 {weekComplete && (
                   <Pressable
                     onPress={() => setShowPuzzle(true)}
@@ -216,6 +236,32 @@ export default function Index() {
               </>
             )}
           </View>
+        )}
+
+        {/* Today / To-Do tab toggle */}
+        {!isFirstHabit && (
+          <View style={styles.tabBar}>
+            {(['today', 'todo'] as const).map((tab) => {
+              const active = activeTab === tab;
+              return (
+                <Pressable
+                  key={tab}
+                  onPress={() => setActiveTab(tab)}
+                  style={[styles.tabBtn, active && styles.tabBtnActive]}
+                >
+                  <Text
+                    style={[styles.tabBtnText, active && styles.tabBtnTextActive]}
+                  >
+                    {tab === 'today' ? 'Today' : 'To-Do'}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
+        {activeTab === 'todo' && !isFirstHabit && (
+          <TodoList todo={todo} onRequestDelete={setDeleteTodoTarget} />
         )}
 
         {/* Empty state */}
@@ -238,6 +284,7 @@ export default function Index() {
         )}
 
         {/* Today's habits */}
+        {activeTab === 'today' && (
         <View style={{ gap: 12 }}>
           {store.activeHabits.map((habit, index) => {
             const entry = store.getDayEntry(habit.id, activeDay);
@@ -464,9 +511,10 @@ export default function Index() {
             );
           })}
         </View>
+        )}
 
         {/* Why you can't add a new habit yet */}
-        {!isFirstHabit && !store.canAddNewHabit() && (
+        {activeTab === 'today' && !isFirstHabit && !store.canAddNewHabit() && (
           <View style={styles.addHint}>
             <Ionicons
               name="lock-closed-outline"
@@ -478,7 +526,7 @@ export default function Index() {
         )}
 
         {/* Permanent habit box */}
-        {store.graduatedHabits.length > 0 && (
+        {activeTab === 'today' && store.graduatedHabits.length > 0 && (
           <View style={styles.permanentBox}>
             <Text style={styles.permanentEyebrow}>Permanent habits</Text>
             <Text style={styles.permanentSub}>
@@ -493,7 +541,7 @@ export default function Index() {
           </View>
         )}
 
-        {evening && viewingToday && store.activeHabits.length > 0 && (
+        {activeTab === 'today' && evening && viewingToday && store.activeHabits.length > 0 && (
           <EveningCheckInPanel
             date={today}
             existing={store.getEveningCheckIn(today)}
@@ -568,6 +616,21 @@ export default function Index() {
       {/* Game rules */}
       <AnimatePresence>
         {showRules && <GameRules key="rules" onClose={() => setShowRules(false)} />}
+      </AnimatePresence>
+
+      {/* Delete to-do sheet */}
+      <AnimatePresence>
+        {deleteTodoTarget && (
+          <DeleteTodoSheet
+            key="delete-todo"
+            text={deleteTodoTarget.text}
+            onClose={() => setDeleteTodoTarget(null)}
+            onConfirm={(reason) => {
+              todo.deleteItem(deleteTodoTarget.id, reason);
+              setDeleteTodoTarget(null);
+            }}
+          />
+        )}
       </AnimatePresence>
 
       {/* Holiday hold */}
@@ -684,7 +747,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   brand: {
     fontFamily: fonts.display,
@@ -748,6 +813,7 @@ const styles = StyleSheet.create({
   },
   boardTitle: { fontSize: 16, fontFamily: fonts.display, color: colors.foreground },
   boardSub: { fontSize: 12, color: colors.mutedForeground },
+  penaltyNote: { fontSize: 12, color: 'hsl(5, 60%, 52%)', marginTop: 6 },
   solvedRow: { flexDirection: 'row', alignItems: 'center' },
   completeBadge: {
     flexDirection: 'row',
@@ -922,6 +988,31 @@ const styles = StyleSheet.create({
   },
   permanentStar: { fontSize: 16, color: colors.success },
   permanentName: { fontSize: 15, fontWeight: '600', color: colors.foreground },
+
+  tabBar: {
+    flexDirection: 'row',
+    gap: 4,
+    backgroundColor: colors.muted,
+    padding: 4,
+    borderRadius: radius.xl,
+    marginBottom: 16,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  },
+  tabBtnActive: {
+    backgroundColor: colors.card,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  tabBtnText: { fontSize: 14, fontWeight: '700', color: colors.mutedForeground },
+  tabBtnTextActive: { color: colors.foreground },
 
   fab: {
     position: 'absolute',

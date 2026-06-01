@@ -66,3 +66,39 @@ export interface AppState {
   // puzzle has been solved for that week.
   solvedPuzzles?: Record<string, boolean>;
 }
+
+// --- To-do list (a separate, lightweight domain stored under its own key) ---
+
+export type TodoStatus = 'open' | 'started' | 'completed';
+
+export interface TodoItem {
+  id: string;
+  text: string;
+  status: TodoStatus;
+  createdAt: string; // YYYY-MM-DD
+  completedAt?: string;
+  // True once a stale item has already cost a tangram piece (so it's only
+  // deducted once).
+  penaltyApplied?: boolean;
+  history: { at: string; from: TodoStatus; to: TodoStatus }[];
+}
+
+export interface DeletedTodo {
+  id: string;
+  text: string;
+  reason: string; // >= 20 chars — future-you should know why you let it go
+  deletedAt: string;
+  createdAt: string;
+}
+
+export interface TodoState {
+  items: TodoItem[];
+  deleted: DeletedTodo[];
+  slotCount: number; // 5 free, 1-10 pro
+  // Date the daily rollover was last run, YYYY-MM-DD.
+  lastRollover?: string;
+  // Tangram pieces taken away by stale items this week.
+  penaltyPieces: number;
+  // ISO week-start the penalty counter applies to.
+  penaltyWeekStart?: string;
+}
