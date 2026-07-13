@@ -2,6 +2,8 @@
 
 # dependencies
 node_modules/
+.agents/
+.claude/
 
 # Expo
 .expo/
@@ -30,7 +32,8 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files — never commit real keys (Clerk secret, Mongo URI, …)
+.env
 .env*.local
 
 # typescript

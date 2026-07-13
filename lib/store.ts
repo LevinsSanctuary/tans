@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState as RNAppState } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 import type {
   AppState,
   DayEntry,
@@ -10,9 +9,8 @@ import type {
   MissedDay,
 } from './types';
 import { addDays, getDaysOfWeek, getToday, getWeekStart } from './date';
-
-const STORAGE_KEY = 'tans:state:v1';
-const SCHEMA_VERSION = 1;
+import { trpc } from './trpc';
+import type { BootstrapData } from './bootstrap';
 
 // --- Game rules (kept here as the single source of truth; mirrored in the
 // in-app "Game Rules" screen). ---
@@ -26,11 +24,6 @@ export const GRADUATION_WEEKS = 9;
 export const MAX_HOLIDAY_DAYS = 7;
 export const HOLIDAY_DANGER_DAYS = 4;
 
-interface PersistedBlob {
-  schemaVersion: number;
-  data: AppState;
-}
-
 const defaultState: AppState = {
   habits: [],
   dayEntries: [],
@@ -41,79 +34,53 @@ const defaultState: AppState = {
   solvedPuzzles: {},
 };
 
-function uuid(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+// Adapt the server's bootstrap payload (entries/missedDays embedded per habit)
+// into the app's flat AppState shape (dayEntries/missedDays keyed by habitId).
+function fromBootstrap(b: BootstrapData): AppState {
+  return {
+    habits: b.habits.map(({ entries, missedDays, ...h }) => h),
+    dayEntries: b.habits.flatMap((h) =>
+      h.entries.map((e) => ({ ...e, reflection: e.reflection ?? '', habitId: h.id })),
+    ),
+    missedDays: b.habits.flatMap((h) =>
+      h.missedDays.map((m) => ({ ...m, habitId: h.id })),
+    ),
+    eveningCheckIns: b.checkins,
+    weekReviews: [], // legacy web-port field; server never stores it
+    onboardingComplete: b.user.onboardingComplete,
+    solvedPuzzles: b.user.solvedPuzzles,
+  };
 }
 
-export function useHabitStore() {
+// `bootstrap` is the hydration payload (null until loaded / after sign-out).
+// `resync` re-runs bootstrap; it's the recovery path when an optimistic
+// mutation fails on the server.
+export function useHabitStore(bootstrap: BootstrapData | null, resync: () => void) {
   const [state, setState] = useState<AppState>(defaultState);
   const [hydrated, setHydrated] = useState(false);
 
-  // Hydrate once on mount.
+  // Hydrate from (or clear on) the bootstrap payload.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as PersistedBlob;
-          if (parsed.schemaVersion === SCHEMA_VERSION && parsed.data) {
-            if (!cancelled) {
-              setState({
-                ...defaultState,
-                ...parsed.data,
-                missedDays: parsed.data.missedDays ?? [],
-                solvedPuzzles: parsed.data.solvedPuzzles ?? {},
-              });
-            }
-          }
-        }
-      } catch {
-        // Corrupt blob — fall back to defaults silently.
-      } finally {
-        if (!cancelled) setHydrated(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (bootstrap) {
+      setState(fromBootstrap(bootstrap));
+      setHydrated(true);
+    } else {
+      setState(defaultState);
+      setHydrated(false);
+    }
+  }, [bootstrap]);
 
-  // Persist on every change, debounced — bursty edits (e.g. typing a
-  // reflection) coalesce into one disk write. Never persist before
-  // hydration finishes or we'd overwrite real data with the empty default.
-  const stateRef = useRef(state);
-  stateRef.current = state;
-
-  const flush = useCallback(() => {
-    const blob: PersistedBlob = {
-      schemaVersion: SCHEMA_VERSION,
-      data: stateRef.current,
-    };
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(blob)).catch(() => {
-      // Best-effort persistence.
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const t = setTimeout(flush, 300);
-    return () => clearTimeout(t);
-  }, [state, hydrated, flush]);
-
-  // Flush immediately when the app goes to the background so a pending
-  // debounced write isn't lost on close.
-  useEffect(() => {
-    if (!hydrated) return;
-    const sub = RNAppState.addEventListener('change', (next) => {
-      if (next === 'background' || next === 'inactive') flush();
-    });
-    return () => sub.remove();
-  }, [hydrated, flush]);
+  // Fire-and-forget optimistic write. On failure, alert and re-pull the world
+  // (no queues / retries — the simplest correct recovery).
+  const fire = useCallback(
+    (p: Promise<unknown>) => {
+      p.catch(() => {
+        Alert.alert('Sync failed', 'Reloading your data.');
+        resync();
+      });
+    },
+    [resync],
+  );
 
   const today = getToday();
   const currentWeekStart = getWeekStart(today);
@@ -240,25 +207,34 @@ export function useHabitStore() {
     weekEarned(getWeekStart(addDays(currentWeekStart, -1))) ||
     weekEarned(getWeekStart(addDays(currentWeekStart, -8)));
 
-  const setHabitHoliday = useCallback((habitId: string, days: number) => {
-    const clamped = Math.max(1, Math.min(MAX_HOLIDAY_DAYS, Math.round(days)));
-    const holiday: HabitHoliday = { startDate: getToday(), days: clamped };
-    setState((prev) => ({
-      ...prev,
-      habits: prev.habits.map((h) =>
-        h.id === habitId ? { ...h, holiday } : h,
-      ),
-    }));
-  }, []);
+  const setHabitHoliday = useCallback(
+    (habitId: string, days: number) => {
+      const clamped = Math.max(1, Math.min(MAX_HOLIDAY_DAYS, Math.round(days)));
+      const startDate = getToday();
+      const holiday: HabitHoliday = { startDate, days: clamped };
+      setState((prev) => ({
+        ...prev,
+        habits: prev.habits.map((h) =>
+          h.id === habitId ? { ...h, holiday } : h,
+        ),
+      }));
+      fire(trpc.habits.setHoliday.mutate({ habitId, startDate, days: clamped }));
+    },
+    [fire],
+  );
 
-  const clearHabitHoliday = useCallback((habitId: string) => {
-    setState((prev) => ({
-      ...prev,
-      habits: prev.habits.map((h) =>
-        h.id === habitId ? { ...h, holiday: undefined } : h,
-      ),
-    }));
-  }, []);
+  const clearHabitHoliday = useCallback(
+    (habitId: string) => {
+      setState((prev) => ({
+        ...prev,
+        habits: prev.habits.map((h) =>
+          h.id === habitId ? { ...h, holiday: undefined } : h,
+        ),
+      }));
+      fire(trpc.habits.clearHoliday.mutate({ habitId }));
+    },
+    [fire],
+  );
 
   // Auto-graduate any habit that has reached 9 consecutive full weeks.
   useEffect(() => {
@@ -272,90 +248,115 @@ export function useHabitStore() {
       )
       .map((h) => h.id);
     if (ids.length === 0) return;
+    const graduatedAt = getToday();
     const idSet = new Set(ids);
     setState((prev) => ({
       ...prev,
       habits: prev.habits.map((h) =>
-        idSet.has(h.id) ? { ...h, active: false, graduatedAt: getToday() } : h,
+        idSet.has(h.id) ? { ...h, active: false, graduatedAt } : h,
       ),
     }));
-  }, [hydrated, state.habits, state.dayEntries, habitGraduationProgress]);
+    ids.forEach((habitId) =>
+      fire(trpc.habits.graduate.mutate({ habitId, graduatedAt })),
+    );
+  }, [hydrated, state.habits, state.dayEntries, habitGraduationProgress, fire]);
 
   const addHabit = useCallback(
-    (name: string) => {
-      setState((prev) => {
-        if (
-          prev.habits.filter((h) => h.active && !h.graduatedAt).length >=
-          MAX_ACTIVE_HABITS
-        )
-          return prev;
-        const habit: Habit = {
-          id: uuid(),
-          name,
-          createdAt: today,
-          active: true,
-        };
-        return {
+    async (name: string) => {
+      if (activeHabits.length >= MAX_ACTIVE_HABITS) return;
+      try {
+        const created = await trpc.habits.add.mutate({ name, today });
+        const { entries: _e, missedDays: _m, ...habit } = created;
+        setState((prev) => ({
           ...prev,
           habits: [...prev.habits, habit],
           onboardingComplete: true,
-        };
-      });
+        }));
+      } catch {
+        Alert.alert('Could not add habit', 'Please try again.');
+      }
     },
-    [today],
+    [today, activeHabits.length],
   );
 
-  const toggleDay = useCallback((habitId: string, date: string) => {
-    setState((prev) => {
-      const existing = prev.dayEntries.find(
-        (e) => e.habitId === habitId && e.date === date,
-      );
-      if (existing) {
-        return {
-          ...prev,
-          dayEntries: prev.dayEntries.map((e) =>
-            e.habitId === habitId && e.date === date
-              ? {
-                  ...e,
-                  completed: !e.completed,
-                  reflection: !e.completed ? e.reflection : '',
-                }
-              : e,
-          ),
+  const toggleDay = useCallback(
+    (habitId: string, date: string) => {
+      setState((prev) => {
+        const existing = prev.dayEntries.find(
+          (e) => e.habitId === habitId && e.date === date,
+        );
+        if (existing) {
+          return {
+            ...prev,
+            dayEntries: prev.dayEntries.map((e) =>
+              e.habitId === habitId && e.date === date
+                ? {
+                    ...e,
+                    completed: !e.completed,
+                    reflection: !e.completed ? e.reflection : '',
+                  }
+                : e,
+            ),
+          };
+        }
+        const entry: DayEntry = {
+          date,
+          habitId,
+          completed: true,
+          reflection: '',
         };
-      }
-      const entry: DayEntry = {
-        date,
-        habitId,
-        completed: true,
-        reflection: '',
-      };
-      return { ...prev, dayEntries: [...prev.dayEntries, entry] };
-    });
-  }, []);
+        return { ...prev, dayEntries: [...prev.dayEntries, entry] };
+      });
+      fire(trpc.habits.toggleDay.mutate({ habitId, date }));
+    },
+    [fire],
+  );
 
+  // Reflection text fires on every keystroke; the local update is immediate but
+  // the server write is debounced 500ms per (habitId, date).
+  const reflectionTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
   const setReflection = useCallback(
     (habitId: string, date: string, reflection: string) => {
+      const clipped = reflection.slice(0, 200);
       setState((prev) => ({
         ...prev,
         dayEntries: prev.dayEntries.map((e) =>
           e.habitId === habitId && e.date === date
-            ? { ...e, reflection: reflection.slice(0, 200) }
+            ? { ...e, reflection: clipped }
             : e,
         ),
       }));
+      const key = `${habitId}|${date}`;
+      const timers = reflectionTimers.current;
+      const pending = timers.get(key);
+      if (pending) clearTimeout(pending);
+      timers.set(
+        key,
+        setTimeout(() => {
+          timers.delete(key);
+          fire(
+            trpc.habits.setReflection.mutate({ habitId, date, reflection: clipped }),
+          );
+        }, 500),
+      );
     },
-    [],
+    [fire],
   );
 
-  const saveEveningCheckIn = useCallback((checkIn: EveningCheckIn) => {
-    setState((prev) => {
-      const filtered = prev.eveningCheckIns.filter(
-        (c) => c.date !== checkIn.date,
-      );
-      return { ...prev, eveningCheckIns: [...filtered, checkIn] };
-    });
-  }, []);
+  const saveEveningCheckIn = useCallback(
+    (checkIn: EveningCheckIn) => {
+      setState((prev) => {
+        const filtered = prev.eveningCheckIns.filter(
+          (c) => c.date !== checkIn.date,
+        );
+        return { ...prev, eveningCheckIns: [...filtered, checkIn] };
+      });
+      fire(trpc.checkins.save.mutate(checkIn));
+    },
+    [fire],
+  );
 
   const getDayEntry = useCallback(
     (habitId: string, date: string) =>
@@ -382,14 +383,18 @@ export function useHabitStore() {
     return latest?.nextHabitIdea.trim() ?? '';
   }, [state.eveningCheckIns]);
 
-  const saveMissedDay = useCallback((entry: MissedDay) => {
-    setState((prev) => {
-      const others = (prev.missedDays ?? []).filter(
-        (m) => !(m.habitId === entry.habitId && m.date === entry.date),
-      );
-      return { ...prev, missedDays: [...others, entry] };
-    });
-  }, []);
+  const saveMissedDay = useCallback(
+    (entry: MissedDay) => {
+      setState((prev) => {
+        const others = (prev.missedDays ?? []).filter(
+          (m) => !(m.habitId === entry.habitId && m.date === entry.date),
+        );
+        return { ...prev, missedDays: [...others, entry] };
+      });
+      fire(trpc.habits.saveMissedDay.mutate(entry));
+    },
+    [fire],
+  );
 
   const getMissedDay = useCallback(
     (habitId: string, date: string) =>
@@ -418,24 +423,32 @@ export function useHabitStore() {
     [getWeekCompletionForHabit],
   );
 
-  const deleteHabit = useCallback((habitId: string) => {
-    setState((prev) => ({
-      ...prev,
-      habits: prev.habits.filter((h) => h.id !== habitId),
-      dayEntries: prev.dayEntries.filter((e) => e.habitId !== habitId),
-      missedDays: (prev.missedDays ?? []).filter((m) => m.habitId !== habitId),
-      weekReviews: prev.weekReviews.filter((r) => r.habitId !== habitId),
-    }));
-  }, []);
+  const deleteHabit = useCallback(
+    (habitId: string) => {
+      setState((prev) => ({
+        ...prev,
+        habits: prev.habits.filter((h) => h.id !== habitId),
+        dayEntries: prev.dayEntries.filter((e) => e.habitId !== habitId),
+        missedDays: (prev.missedDays ?? []).filter((m) => m.habitId !== habitId),
+        weekReviews: prev.weekReviews.filter((r) => r.habitId !== habitId),
+      }));
+      fire(trpc.habits.remove.mutate({ habitId }));
+    },
+    [fire],
+  );
 
-  const editHabit = useCallback((habitId: string, newName: string) => {
-    setState((prev) => ({
-      ...prev,
-      habits: prev.habits.map((h) =>
-        h.id === habitId ? { ...h, name: newName } : h,
-      ),
-    }));
-  }, []);
+  const editHabit = useCallback(
+    (habitId: string, newName: string) => {
+      setState((prev) => ({
+        ...prev,
+        habits: prev.habits.map((h) =>
+          h.id === habitId ? { ...h, name: newName } : h,
+        ),
+      }));
+      fire(trpc.habits.rename.mutate({ habitId, name: newName }));
+    },
+    [fire],
+  );
 
   const canAddNewHabit = useCallback(() => {
     if (activeHabits.length === 0) return true; // the very first habit
@@ -457,12 +470,16 @@ export function useHabitStore() {
     return null;
   }, [activeHabits.length, addedHabitThisWeek, completedRecentWeek]);
 
-  const markPuzzleSolved = useCallback((weekStart: string) => {
-    setState((prev) => ({
-      ...prev,
-      solvedPuzzles: { ...(prev.solvedPuzzles ?? {}), [weekStart]: true },
-    }));
-  }, []);
+  const markPuzzleSolved = useCallback(
+    (weekStart: string) => {
+      setState((prev) => ({
+        ...prev,
+        solvedPuzzles: { ...(prev.solvedPuzzles ?? {}), [weekStart]: true },
+      }));
+      fire(trpc.user.markPuzzleSolved.mutate({ weekStart }));
+    },
+    [fire],
+  );
 
   const isPuzzleSolved = useCallback(
     (weekStart: string) => !!(state.solvedPuzzles ?? {})[weekStart],
@@ -489,7 +506,8 @@ export function useHabitStore() {
       );
       return { ...prev, dayEntries: [...others, ...filled] };
     });
-  }, [currentWeekStart]);
+    fire(trpc.dev.fillWeek.mutate({ days: getDaysOfWeek(currentWeekStart) }));
+  }, [currentWeekStart, fire]);
 
   const devClearWeek = useCallback(() => {
     setState((prev) => {
@@ -504,9 +522,16 @@ export function useHabitStore() {
         ),
       };
     });
-  }, [currentWeekStart]);
+    fire(
+      trpc.dev.clearWeek.mutate({
+        days: getDaysOfWeek(currentWeekStart),
+        weekStart: currentWeekStart,
+      }),
+    );
+  }, [currentWeekStart, fire]);
 
   const devTogglePuzzleSolved = useCallback(() => {
+    const solved = !isPuzzleSolved(currentWeekStart);
     setState((prev) => {
       const current = !!(prev.solvedPuzzles ?? {})[currentWeekStart];
       const next = { ...(prev.solvedPuzzles ?? {}) };
@@ -514,12 +539,17 @@ export function useHabitStore() {
       else next[currentWeekStart] = true;
       return { ...prev, solvedPuzzles: next };
     });
-  }, [currentWeekStart]);
+    fire(trpc.dev.setPuzzleSolved.mutate({ weekStart: currentWeekStart, solved }));
+  }, [currentWeekStart, isPuzzleSolved, fire]);
 
   const devResetAll = useCallback(async () => {
-    await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
-    setState(defaultState);
-  }, []);
+    try {
+      await trpc.dev.resetAll.mutate();
+      resync();
+    } catch {
+      Alert.alert('Reset failed', 'Please try again.');
+    }
+  }, [resync]);
 
   return {
     state,

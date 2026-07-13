@@ -17,6 +17,7 @@
     },
     "plugins": [
       "expo-router",
+      "@clerk/expo",
       [
         "expo-splash-screen",
         {
@@ -28,7 +29,8 @@
             "backgroundColor": "#FAF7F4"
           }
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
