@@ -1,0 +1,4 @@
+# Makes `server/` its own pnpm root so installs don't walk up into the parent
+# `tans/` (Expo) workspace and hoist Next.js/react-dom into the RN app's tree.
+# Keeps the backend fully isolated from Metro.
+packages: []

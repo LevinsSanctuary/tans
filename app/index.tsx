@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
@@ -15,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AnimatePresence, MotiView } from 'moti';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useAuth } from '@clerk/expo';
 
 import { Tangram } from '@/components/Tangram';
 import { FallingTangram } from '@/components/FallingTangram';
@@ -27,16 +29,22 @@ import { HolidaySheet } from '@/components/HolidaySheet';
 import { TodoList } from '@/components/TodoList';
 import { DeleteTodoSheet } from '@/components/DeleteTodoSheet';
 import { DevMenu } from '@/components/DevMenu';
+import { AccountSheet } from '@/components/AccountSheet';
+import { SignInScreen } from '@/components/auth/SignInScreen';
 import { getSilhouetteForWeek } from '@/lib/silhouettes';
 import { GRADUATION_WEEKS, useHabitStore } from '@/lib/store';
 import { useTodoStore } from '@/lib/todoStore';
+import { useBootstrap } from '@/lib/bootstrap';
 import { isEvening } from '@/lib/date';
 import type { TodoItem } from '@/lib/types';
 import { colors, fonts, habitBorders, radius } from '@/constants/theme';
 
 export default function Index() {
-  const store = useHabitStore();
-  const todo = useTodoStore();
+  const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const boot = useBootstrap();
+  const store = useHabitStore(boot.data, boot.reload);
+  const todo = useTodoStore(boot.data, boot.reload);
+  const [showAccount, setShowAccount] = useState(false);
   const [activeTab, setActiveTab] = useState<'today' | 'todo'>('today');
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
@@ -115,6 +123,33 @@ export default function Index() {
     });
   }, [activeDay]);
 
+  // Auth gate. All hooks above run unconditionally; the gate lives just before
+  // the render so hook order stays stable across signed-in/out.
+  if (!authLoaded) return null;
+  if (!isSignedIn) return <SignInScreen />;
+  if (boot.error) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <View style={styles.centerFill}>
+          <Text style={styles.gateTitle}>Couldn’t reach the server</Text>
+          <Text style={styles.gateBody}>{boot.error}</Text>
+          <Pressable onPress={boot.reload} style={styles.retryBtn} hitSlop={8}>
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  if (!store.hydrated) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {/* Fixed header — lives outside the ScrollView so it stays pinned */}
@@ -156,6 +191,17 @@ export default function Index() {
           >
             <Ionicons
               name="help-circle-outline"
+              size={24}
+              color={colors.mutedForeground}
+            />
+          </Pressable>
+          <Pressable
+            onPress={() => setShowAccount(true)}
+            hitSlop={8}
+            style={styles.infoBtn}
+          >
+            <Ionicons
+              name="person-circle-outline"
               size={24}
               color={colors.mutedForeground}
             />
@@ -618,6 +664,13 @@ export default function Index() {
         {showRules && <GameRules key="rules" onClose={() => setShowRules(false)} />}
       </AnimatePresence>
 
+      {/* Account / sign out */}
+      <AnimatePresence>
+        {showAccount && (
+          <AccountSheet key="account" onClose={() => setShowAccount(false)} />
+        )}
+      </AnimatePresence>
+
       {/* Delete to-do sheet */}
       <AnimatePresence>
         {deleteTodoTarget && (
@@ -741,6 +794,37 @@ export default function Index() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
+  centerFill: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  gateTitle: {
+    fontFamily: fonts.display,
+    fontSize: 20,
+    color: colors.foreground,
+    textAlign: 'center',
+  },
+  gateBody: {
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    color: colors.mutedForeground,
+    textAlign: 'center',
+  },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: colors.primary,
+    borderRadius: radius.lg,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+  },
+  retryText: {
+    fontFamily: fonts.sansBold,
+    fontSize: 15,
+    color: colors.primaryForeground,
+  },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 },
   header: {
