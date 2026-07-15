@@ -11,7 +11,7 @@ config({ path: '.env.local' });
 import { MongoClient } from 'mongodb';
 import { validators } from './schema';
 
-const uri = process.env.MONGODB_URI;
+const uri = process.env.MONGODB_URL ?? process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || 'tans';
 
 async function main() {

@@ -15,14 +15,18 @@
       "distribution": "store",
       "autoIncrement": true,
       "env": {
-        "APP_ENV": "preview"
+        "APP_ENV": "preview",
+        "EXPO_PUBLIC_API_URL": "https://tans-ashy.vercel.app",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_bmVhcmJ5LWNhdC02NC5jbGVyay5hY2NvdW50cy5kZXYk"
       }
     },
     "production": {
       "distribution": "store",
       "autoIncrement": true,
       "env": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_API_URL": "https://tans-ashy.vercel.app",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_bmVhcmJ5LWNhdC02NC5jbGVyay5hY2NvdW50cy5kZXYk"
       }
     }
   },
