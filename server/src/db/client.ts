@@ -3,8 +3,10 @@ import { MongoClient } from 'mongodb';
 // A single shared connection promise. In dev, Next's HMR re-evaluates modules on
 // every edit, which would otherwise spawn a new pool each time and exhaust
 // Atlas's connection limit — so we stash the promise on globalThis.
-const uri = process.env.MONGODB_URI;
-if (!uri) throw new Error('MONGODB_URI is not set (see .env.local.example)');
+// MONGODB_URL is what the Vercel↔Atlas integration injects; MONGODB_URI is the
+// name local dev / .env.local uses. Accept either (integration takes priority).
+const uri = process.env.MONGODB_URL ?? process.env.MONGODB_URI;
+if (!uri) throw new Error('MONGODB_URL / MONGODB_URI is not set (see .env.local.example)');
 
 declare global {
   // eslint-disable-next-line no-var
